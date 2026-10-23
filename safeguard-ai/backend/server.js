@@ -4,6 +4,18 @@ const app = express(); app.use(cors(), express.json());
 const CONFIRM_MS = (+process.env.CONFIRM_SECONDS || 10) * 1000;
 const sb = process.env.SUPABASE_URL && process.env.SUPABASE_KEY ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY) : null;
 const T = ['Harassment', 'Poor lighting', 'Theft', 'Stalking', 'Unsafe crowd'];
+async function notify(d, reason) {
+  if (!process.env.NTFY_TOPIC) return 'ntfy not configured';
+  const link = `https://maps.google.com/?q=${d.lat},${d.lng}`;
+  try {
+    await fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC}`, {
+      method: 'POST',
+      headers: { Title: 'SafeGuard AI emergency', Priority: 'urgent', Tags: 'rotating_light', Click: link },
+      body: `${reason}. Tap to open the location: ${link}`
+    });
+    return 'ntfy sent';
+  } catch { return 'ntfy failed'; }
+}
 const hot = [...Array(7)].map((_, i) => ({ id: 100 + i, type: i % 2 ? 'Harassment' : 'Stalking', lat: 28.6315 + Math.sin(i) * .0007, lng: 77.2167 + Math.cos(i) * .0008, created_at: new Date(Date.now() - i * 3 * 36e5).toISOString(), confirms: 2 }));
 const seed = [...[...Array(28)].map((_, i) => ({ id: i + 1, type: T[i % 5], lat: 28.6139 + Math.sin(i * 7) * .012 + (i % 3 ? .004 : 0), lng: 77.209 + Math.cos(i * 5) * .014, created_at: new Date(Date.now() - i * 8 * 36e5).toISOString(), confirms: i % 4 })), ...hot];
 const mem = { incidents: seed, alerts: [], contacts: [{ id: 1, name: 'Mom', phone: '+91 90000 00001' }], sensor_logs: [] };
@@ -33,6 +45,7 @@ app.post('/sensor-data', async (req, res) => {
     if (cancelled.has(alert.id)) return;
     const contacts = await list('contacts');
     await patch('alerts', alert.id, { status: 'sent', notified: contacts.map(x => x.name) });
+    console.log(await notify(d, c.reason));
     console.log(`ALERT SENT to ${contacts.map(x => x.phone)} @ ${d.lat},${d.lng}`);
   }, CONFIRM_MS);
   res.json({ ...c, alert });
