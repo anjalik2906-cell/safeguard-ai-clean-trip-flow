@@ -30,10 +30,20 @@ export default function App() {
   const [tab, setTab] = useState('map'), [inc, setInc] = useState([]), [alerts, setAlerts] = useState([]), [contacts, setContacts] = useState([]);
   const [pos, setPos] = useState(HOME), [from, setFrom] = useState({ name: 'Your location', ll: HOME }), [to, setTo] = useState(null);
   const [mode, setMode] = useState('foot'), [later, setLater] = useState(''), [raw, setRaw] = useState([]), [sel, setSel] = useState(null), [nav, setNav] = useState(false), [busy, setBusy] = useState(false);
-  const [help, setHelp] = useState([]), [open, setOpen] = useState(false), [toast, setToast] = useState(''), [now, setNow] = useState(Date.now()), [net, setNet] = useState('WiFi');
+  const [help, setHelp] = useState([]), [sh, setSh] = useState(40), [toast, setToast] = useState(''), [now, setNow] = useState(Date.now()), [net, setNet] = useState('WiFi');
   const [fac, setFac] = useState([]), [facBusy, setFacBusy] = useState(false), [facErr, setFacErr] = useState(false), [show, setShow] = useState({ help: true, open: true, transit: true }), [tick, setTick] = useState(0);
   const [edit, setEdit] = useState(true), [layersOpen, setLayersOpen] = useState(false), [routeErr, setRouteErr] = useState(false);
   useEffect(() => setEdit(!to), [to]);
+  useEffect(() => setSh(to ? 40 : 22), [!!to]);
+  const open = sh > 60, wrap = useRef();
+  const dragStart = e => {
+    e.preventDefault();
+    let moved = false;
+    const snap = v => [6, 40, 88].reduce((a, p) => Math.abs(p - v) < Math.abs(a - v) ? p : a);
+    const move = ev => { moved = true; const b = wrap.current.getBoundingClientRect(); setSh(Math.min(90, Math.max(6, (b.bottom - ev.clientY) / b.height * 100))); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); setSh(v => moved ? snap(v) : v < 20 ? 40 : v < 60 ? 88 : 40); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  };
   const mapEl = useRef(), map = useRef(), lay = useRef({}), holdT = useRef(), walk = useRef(), dev = useRef(false);
   const load = () => { api('/incidents').then(d => setInc(p => JSON.stringify(p.map(x => [x.id, x.confirms])) === JSON.stringify(d.map(x => [x.id, x.confirms])) ? p : d)).catch(() => { }); api('/alerts').then(setAlerts).catch(() => { }); api('/contacts').then(setContacts).catch(() => { }); };
   useEffect(() => { load(); const t = setInterval(() => { load(); setNow(Date.now()); }, 1500); return () => clearInterval(t); }, []);
@@ -136,7 +146,7 @@ export default function App() {
   const nearest = t => { const h = help.find(x => x.type === t); h ? setTo({ name: h.name, ll: [h.lat, h.lon] }) : setToast('No ' + t.toLowerCase() + ' found within 3 km.'); };
   const arrive = r && new Date(depMs + r.duration * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const soon = () => { const d = new Date(Date.now() + 36e5); d.setMinutes(0); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); };
-  const startTrip = () => { setNav(true); setOpen(false); dev.current = false; setPos(from.ll); map.current.setView(from.ll, 17); };
+  const startTrip = () => { setNav(true); setSh(40); dev.current = false; setPos(from.ll); map.current.setView(from.ll, 17); };
   const nextStep = r && (() => { const st = r.legs[0].steps; let b = 0, bd = 1e9; st.forEach((x, k) => { const d = D(pos, [x.maneuver.location[1], x.maneuver.location[0]]); if (d < bd) { bd = d; b = k; } }); return st[Math.min(b + 1, st.length - 1)]; })();
   const pending = alerts.find(a => a.status === 'pending'), secs = pending ? Math.max(0, Math.ceil((new Date(pending.deadline) - now) / 1000)) : 0;
   const hold = on => { clearTimeout(holdT.current); if (on) holdT.current = setTimeout(() => send({ sos: true, accel: 0, sound: 0 }), 1200); };
@@ -144,9 +154,9 @@ export default function App() {
     <header><div><h1>SafeGuard AI</h1><small className="tagline">Safer Routes. Smarter Journeys.</small></div><div className="hr"><span className={'chip' + (pending ? ' warn' : '')}>{pending ? 'Checking in' : (nav ? 'Trip monitored · ' : 'Protected · ') + net}</span><button className="ic" onClick={locate} aria-label="Use my location">◎</button><button className="ic" onClick={() => setTab('device')} aria-label="Settings and contacts">⚙</button></div></header>
     {toast && <div className="toast">{toast}</div>}
     <main>
-      <div className={'mapwrap' + (tab === 'map' ? '' : ' hide')}>
+      <div ref={wrap} style={{ '--sh': sh + '%' }} className={'mapwrap' + (tab === 'map' ? '' : ' hide')}>
         <div ref={mapEl} className="map" />
-        {!nav && <div className="top">
+        {!nav && sh <= 60 && <div className="top">
           {to && !edit ? <button className="card summary" onClick={() => setEdit(true)}><span>{from.name} <i>to</i> {to.name}</span><b>Edit</b></button> :
             <div className="card tight">
               <Search value={from.name} bias={pos} placeholder="Pickup point" icon="●" onPick={p => { setFrom(p); if (to) setEdit(false); }} />
@@ -155,12 +165,12 @@ export default function App() {
             </div>}
         </div>}
         {nav && r && nextStep && <div className="navbar"><b>{say(nextStep)}</b><small>in {km(D(pos, [nextStep.maneuver.location[1], nextStep.maneuver.location[0]]))}</small></div>}
-        {to && !nav && <button className="layb" onClick={() => setLayersOpen(v => !v)}>Layers</button>}
-        {layersOpen && to && !nav && <div className="layp">{[['help', 'Help points'], ['open', 'Shops'], ['transit', 'Transport']].map(([k, n]) => <button key={k} className={show[k] ? 'on' : ''} onClick={() => setShow(v => ({ ...v, [k]: !v[k] }))}>{n}</button>)}</div>}
-        <button className="loc" onClick={locate} aria-label="Use my location">◎</button>
-        <button className="sos" onPointerDown={() => hold(true)} onPointerUp={() => hold(false)} onPointerLeave={() => hold(false)}>Hold for SOS</button>
-        <div className={'sheet' + (open ? ' exp' : '')}>
-          <button className="grab" onClick={() => setOpen(!open)} aria-label="Show more or less" />
+        {to && !nav && sh <= 60 && <button className="layb" onClick={() => setLayersOpen(v => !v)}>Layers</button>}
+        {layersOpen && to && !nav && sh <= 60 && <div className="layp">{[['help', 'Help points'], ['open', 'Shops'], ['transit', 'Transport']].map(([k, n]) => <button key={k} className={show[k] ? 'on' : ''} onClick={() => setShow(v => ({ ...v, [k]: !v[k] }))}>{n}</button>)}</div>}
+        {sh <= 60 && <button className="loc" onClick={locate} aria-label="Use my location">◎</button>}
+        <button className="sos" style={sh > 60 ? { bottom: 'auto', top: 10 } : undefined} onPointerDown={() => hold(true)} onPointerUp={() => hold(false)} onPointerLeave={() => hold(false)}>Hold for SOS</button>
+        <div className="sheet" style={{ height: sh + '%', maxHeight: 'none' }}>
+          <div className="grab" role="separator" aria-label="Drag to resize the panel" onPointerDown={dragStart} />
           {!to && <p>Search a place above, or tap the map to drop a pin. Routes are scored using community reports and mapped places.</p>}
           {to && !nav && <div className="seg">{Object.entries(MODES).map(([k, n]) => <button key={k} className={mode === k ? 'on' : ''} onClick={() => setMode(k)}>{n}</button>)}</div>}
           {to && busy && <p>Finding routes…</p>}
@@ -170,7 +180,7 @@ export default function App() {
             <span className="score" style={{ background: tone(x.score) }}>{x.score}</span></button>)}
           {to && !nav && r && r.redM > 0 && <div className="warnbox"><span>Red zone: {km(r.redM)} of this route is high risk{night ? ' at night' : ''}.</span>{cur !== bestIdx && <button className="b red" onClick={() => setSel(bestIdx)}>Avoid red zones</button>}</div>}
           {to && !nav && r && <button className="b" onClick={startTrip}>Start trip · arrive {arrive}</button>}
-          {to && !nav && r && !open && <small>Swipe up or tap the bar for options and route details.</small>}
+          {to && !nav && r && !open && <small>Drag the bar up for options and route details, or down to hide this panel.</small>}
           {to && !nav && open && <>
             <div className="seg"><button className={!later ? 'on' : ''} onClick={() => setLater('')}>Leave now</button><button className={later ? 'on' : ''} onClick={() => setLater(later || soon())}>Leave later</button></div>
             {later && <input type="datetime-local" value={later} onChange={e => setLater(e.target.value)} />}
